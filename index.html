@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Mini Geometry Dash</title>
+  <style>
+    body {
+      margin: 0;
+      background-color: #1b3b22;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      height: 100vh;
+      font-family: Arial, sans-serif;
+      color: white;
+      position: relative;
+    }
+
+    /* Language selector positioned at top right */
+    .lang-container {
+      position: absolute;
+      top: 20px;
+      right: 20px;
+    }
+
+    .lang-container select {
+      background-color: #112816;
+      color: #fff;
+      border: 2px solid #00ffcc;
+      padding: 6px 12px;
+      border-radius: 6px;
+      font-size: 14px;
+      cursor: pointer;
+      outline: none;
+    }
+
+    h1 {
+      margin-bottom: 10px;
+    }
+
+    #gameCanvas {
+      border: 4px solid #00ffcc;
+      background-color: #0b2312;
+      box-shadow: 0 0 25px rgba(0, 255, 128, 0.4);
+    }
+
+    .info {
+      margin-top: 10px;
+      font-size: 16px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Language Selection Dropdown -->
+  <div class="lang-container">
+    <select id="langSelect" onchange="changeLanguage()">
+      <option value="en" selected>English</option>
+      <option value="zh">中文 (Chinese)</option>
+      <option value="fr">Français (French)</option>
+      <option value="ja">日本語 (Japanese)</option>
+    </select>
+  </div>
+
+  <h1 id="title">🚀 Mini Geometry Dash</h1>
+  <canvas id="gameCanvas" width="600" height="300"></canvas>
+  <div class="info" id="instructions">Click mouse or press [Space] to jump!</div>
+
+  <script>
+    const canvas = document.getElementById("gameCanvas");
+    const ctx = canvas.getContext("2d");
+
+    // Translations
+    const translations = {
+      en: {
+        title: "🚀 Mini Geometry Dash",
+        instructions: "Click mouse or press [Space] to jump!",
+        score: "Score: ",
+        gameOver: "GAME OVER",
+        victory: "LEVEL COMPLETE!",
+        restart: "Click or press [Space] to restart"
+      },
+      zh: {
+        title: "🚀 几何冲刺（Mini Geometry Dash）",
+        instructions: "点击鼠标 或 按【空格键】跳跃！",
+        score: "得分: ",
+        gameOver: "游戏结束",
+        victory: "通关成功！",
+        restart: "点击屏幕 或 按【空格键】重新开始"
+      },
+      fr: {
+        title: "🚀 Mini Geometry Dash",
+        instructions: "Cliquez ou appuyez sur [Espace] pour sauter !",
+        score: "Score: ",
+        gameOver: "FIN DE PARTIE",
+        victory: "NIVEAU TERMINÉ !",
+        restart: "Cliquez ou appuyez sur [Espace] pour recommencer"
+      },
+      ja: {
+        title: "🚀 ジオメトリーダッシュ ミニ",
+        instructions: "クリックまたは [スペースキー] でジャンプ！",
+        score: "スコア: ",
+        gameOver: "ゲームオーバー",
+        victory: "ステージクリア！",
+        restart: "クリックまたは [スペースキー] で再スタート"
+      }
+    };
+
+    let currentLang = "en";
+
+    function changeLanguage() {
+      const select = document.getElementById("langSelect");
+      currentLang = select.value;
+
+      document.getElementById("title").innerText = translations[currentLang].title;
+      document.getElementById("instructions").innerText = translations[currentLang].instructions;
+      document.title = translations[currentLang].title;
+
+      if (gameOver || gameWon) {
+        drawEndScreen();
+      }
+    }
+
+    // 1. Player Properties
+    const player = {
+      x: 80,
+      y: 200,
+      size: 30,
+      color: "#00ffcc",
+      velocityY: 0,
+      gravity: 0.58,
+      jumpPower: -9.8,
+      isGrounded: false
+    };
+
+    // 2. Ground Position
+    const groundY = 250;
+
+    // 3. Game Variables
+    const speed = 2.8;
+    let obstacles = [];
+    let frameCount = 0;
+    let score = 0;
+    let gameOver = false;
+    let gameWon = false;
+
+    // Limit spawner to ~6 obstacles (Total distance width of 50 block units = 1500px)
+    const MAX_LEVEL_BLOCKS = 50; 
+    let spawnedBlocksTotal = 0;
+
+    const singleObstacles = [
+      { type: 'spike', w: 25, h: 30 },
+      { type: 'spike', w: 28, h: 28 },
+      { type: 'square', w: 30, h: 30 },
+      { type: 'square', w: 30, h: 20 },
+      { type: 'square', w: 30, h: 40 }
+    ];
+
+    let framesUntilNextSpawn = 0;
+
+    function spawnSingleObstacle() {
+      if (spawnedBlocksTotal >= MAX_LEVEL_BLOCKS) return;
+
+      const randomIndex = Math.floor(Math.random() * singleObstacles.length);
+      const item = singleObstacles[randomIndex];
+
+      obstacles.push({
+        type: item.type,
+        x: canvas.width,
+        width: item.w,
+        height: item.h
+      });
+
+      // Track distance of 1 obstacle width (1 block) + 7 blocks gap = 8 block units total per spawn
+      spawnedBlocksTotal += 8;
+
+      // 7 block gap (210px) spacing
+      const gapWidth = 210;
+      const totalDistance = item.w + gapWidth;
+      framesUntilNextSpawn = Math.round(totalDistance / speed);
+    }
+
+    // Input Listeners
+    document.addEventListener("keydown", function(e) {
+      if (e.code === "Space") {
+        if (e.target === document.body) {
+          e.preventDefault();
+        }
+        jump();
+      }
+    });
+
+    document.addEventListener("pointerdown", function(e) {
+      if (e.target.tagName === "SELECT") return;
+      jump();
+    });
+
+    function jump() {
+      if (gameOver || gameWon) {
+        restartGame();
+        return;
+      }
+      if (player.isGrounded) {
+        player.velocityY = player.jumpPower;
+        player.isGrounded = false;
+      }
+    }
+
+    function restartGame() {
+      player.y = groundY - player.size;
+      player.velocityY = 0;
+      player.isGrounded = true;
+      obstacles = [];
+      score = 0;
+      frameCount = 0;
+      framesUntilNextSpawn = 0;
+      spawnedBlocksTotal = 0;
+      gameOver = false;
+      gameWon = false;
+      gameLoop();
+    }
+
+    function drawEndScreen() {
+      ctx.fillStyle = "rgba(5, 20, 10, 0.85)";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      ctx.textAlign = "center";
+      
+      if (gameWon) {
+        ctx.fillStyle = "#00ffcc";
+        ctx.font = "bold 34px Arial";
+        ctx.fillText(translations[currentLang].victory, canvas.width / 2, 130);
+      } else {
+        ctx.fillStyle = "#ff3366";
+        ctx.font = "bold 34px Arial";
+        ctx.fillText(translations[currentLang].gameOver, canvas.width / 2, 130);
+      }
+
+      ctx.fillStyle = "#fff";
+      ctx.font = "16px Arial";
+      ctx.fillText(translations[currentLang].restart, canvas.width / 2, 170);
+      ctx.textAlign = "start";
+    }
+
+    // Main Game Loop
+    function gameLoop() {
+      if (gameOver || gameWon) return;
+
+      // --- A. Update Game State ---
+      frameCount++;
+      score = Math.floor(frameCount / 5);
+
+      // Apply Gravity
+      player.velocityY += player.gravity;
+      player.y += player.velocityY;
+
+      let currentGround = groundY;
+      player.isGrounded = false;
+
+      // Distance-based spawner (stops once 50 block widths limit reached)
+      if (spawnedBlocksTotal < MAX_LEVEL_BLOCKS) {
+        if (framesUntilNextSpawn <= 0) {
+          spawnSingleObstacle();
+        } else {
+          framesUntilNextSpawn--;
+        }
+      } else if (obstacles.length === 0) {
+        // Trigger Victory once last obstacle clears off-screen
+        gameWon = true;
+      }
+
+      // Move Obstacles & Handle Physics / Collisions
+      for (let i = 0; i < obstacles.length; i++) {
+        let obs = obstacles[i];
+        obs.x -= speed;
+
+        let obsTop = groundY - obs.height;
+
+        if (obs.type === "spike") {
+          // Inner hit-box buffer
+          const buffer = 5;
+          const spikeLeft = obs.x + buffer;
+          const spikeRight = obs.x + obs.width - buffer;
+          const spikeTop = obsTop + buffer;
+
+          if (
+            player.x < spikeRight &&
+            player.x + player.size > spikeLeft &&
+            player.y + player.size > spikeTop
+          ) {
+            gameOver = true;
+          }
+        } else if (obs.type === "square") {
+          // Check collision with Square Platform
+          if (player.x + player.size > obs.x && player.x < obs.x + obs.width) {
+            if (
+              player.y + player.size >= obsTop &&
+              player.y + player.size <= obsTop + player.velocityY + 8 &&
+              player.velocityY >= 0
+            ) {
+              currentGround = obsTop;
+            } else if (player.y + player.size > obsTop + 8) {
+              gameOver = true;
+            }
+          }
+        }
+      }
+
+      // Ground Check
+      if (player.y + player.size >= currentGround) {
+        player.y = currentGround - player.size;
+        player.velocityY = 0;
+        player.isGrounded = true;
+      }
+
+      // Remove Offscreen Obstacles
+      obstacles = obstacles.filter(obs => obs.x + obs.width > 0);
+
+      // --- B. Draw Frame ---
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // 1. Ground
+      ctx.fillStyle = "#07180b";
+      ctx.fillRect(0, groundY, canvas.width, canvas.height - groundY);
+      ctx.strokeStyle = "#00ffcc";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(0, groundY);
+      ctx.lineTo(canvas.width, groundY);
+      ctx.stroke();
+
+      // 2. Player Body
+      ctx.fillStyle = player.color;
+      ctx.fillRect(player.x, player.y, player.size, player.size);
+      ctx.strokeStyle = "#fff";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(player.x, player.y, player.size, player.size);
+
+      // --- Draw Player Face ---
+      ctx.fillStyle = "#ffffff";
+      ctx.beginPath();
+      ctx.arc(player.x + 9, player.y + 10, 4, 0, Math.PI * 2);
+      ctx.arc(player.x + 21, player.y + 10, 4, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.fillStyle = "#000000";
+      ctx.beginPath();
+      ctx.arc(player.x + 10, player.y + 10, 2, 0, Math.PI * 2);
+      ctx.arc(player.x + 22, player.y + 10, 2, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.strokeStyle = "#000000";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(player.x + 15, player.y + 18, 6, 0.1 * Math.PI, 0.9 * Math.PI, false);
+      ctx.stroke();
+
+      // 3. Render Obstacles
+      for (let obs of obstacles) {
+        if (obs.type === "spike") {
+          ctx.fillStyle = "#ff3366";
+          ctx.beginPath();
+          ctx.moveTo(obs.x, groundY);
+          ctx.lineTo(obs.x + obs.width / 2, groundY - obs.height);
+          ctx.lineTo(obs.x + obs.width, groundY);
+          ctx.closePath();
+          ctx.fill();
+        } else if (obs.type === "square") {
+          ctx.fillStyle = "#ffcc00";
+          ctx.fillRect(obs.x, groundY - obs.height, obs.width, obs.height);
+          ctx.strokeStyle = "#ffffff";
+          ctx.lineWidth = 1;
+          ctx.strokeRect(obs.x, groundY - obs.height, obs.width, obs.height);
+        }
+      }
+
+      // 4. Score
+      ctx.fillStyle = "#fff";
+      ctx.font = "20px Arial";
+      ctx.fillText(translations[currentLang].score + score, 20, 35);
+
+      // 5. Game End Screen
+      if (gameOver || gameWon) {
+        drawEndScreen();
+      } else {
+        requestAnimationFrame(gameLoop);
+      }
+    }
+
+    // Start Game
+    gameLoop();
+  </script>
+</body>
+</html>
